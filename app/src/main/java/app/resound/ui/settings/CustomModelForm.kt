@@ -23,9 +23,10 @@ import app.resound.ui.verify.springClick
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
-/** 自定义转写才有：地址写法（自动匹配 / 完整地址）与完整地址下是否附带热词 */
+/** 自定义转写才有：地址写法、完整地址下是否附带热词，以及是否请求句级时间戳。 */
 internal class EndpointModeUi(val initial: CustomEndpointMode, val prompt: kotlinx.coroutines.flow.StateFlow<Boolean>,
-    val setPrompt: (Boolean) -> Unit, val save: (String, String, String, CustomEndpointMode) -> Unit)
+    val setPrompt: (Boolean) -> Unit, val save: (String, String, String, CustomEndpointMode) -> Unit,
+    val verboseJson: kotlinx.coroutines.flow.StateFlow<Boolean>, val setVerboseJson: (Boolean) -> Unit)
 
 /** 沿用原密钥输入框，不引入另一套 Material 文本框外观。 */
 @Composable
@@ -110,6 +111,18 @@ internal fun CustomModelForm(initialEndpoint:String,initialModel:String,hasKey:B
                 }
                 Spacer(Modifier.width(12.dp))
                 app.resound.ui.skills.Toggle(prompt){modes.setPrompt(it)}
+            }
+        }
+        if(modes!=null) {
+            val verboseJson by modes.verboseJson.collectAsState()
+            Spacer(Modifier.height(16.dp))
+            Row(verticalAlignment=androidx.compose.ui.Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("请求句级时间戳（verbose_json）",style=RsType.body,color=c.text)
+                    Text("服务支持时打开，按句返回文字和时间。",style=RsType.caption,color=c.textTertiary)
+                }
+                Spacer(Modifier.width(12.dp))
+                app.resound.ui.skills.Toggle(verboseJson){modes.setVerboseJson(it)}
             }
         }
         Spacer(Modifier.height(14.dp))

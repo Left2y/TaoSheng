@@ -11,11 +11,13 @@ import okhttp3.RequestBody.Companion.asRequestBody
 import org.json.JSONObject
 import java.util.concurrent.TimeUnit
 
-internal fun customAsrBody(audio: AsrAudio, model: String, words: List<String>, withPrompt: Boolean = true): MultipartBody {
+internal fun customAsrBody(audio: AsrAudio, model: String, words: List<String>, withPrompt: Boolean = true,
+    verboseJson: Boolean = false): MultipartBody {
     val mime = when (audio.format) { "ogg" -> "audio/ogg"; "wav" -> "audio/wav"; else -> "audio/mp4" }
     return MultipartBody.Builder().setType(MultipartBody.FORM).addFormDataPart("model", model)
         .addFormDataPart("file", audio.file.name, audio.file.asRequestBody(mime.toMediaType()))
-        .addFormDataPart("response_format", "json").apply {
+        .addFormDataPart("response_format", if (verboseJson) "verbose_json" else "json").apply {
+            if (verboseJson) addFormDataPart("timestamp_granularities[]", "segment")
             // 热词靠 prompt 字段；MiniMax 等服务不认它，完整地址模式下默认不发。
             if (withPrompt) Hotwords.customPrompt(words).takeIf { it.isNotEmpty() }?.let { addFormDataPart("prompt", it) }
         }.build()
@@ -33,6 +35,33 @@ internal fun transcriptionText(json: JSONObject): String {
     throw AsrException(AsrError.Protocol)
 }
 
+/** 句级结果始终解析；请求开关只决定向服务端要哪种格式。 */
+internal fun transcriptionSentences(json: JSONObject, audio: AsrAudio): List<AsrSentence> {
+    val segments = json.optJSONArray("segments")
+    val sentences = buildList {
+        if (segments != null) for (i in 0 until segments.length()) {
+            val segment = segments.optJSONObject(i) ?: continue
+            val text = (segment.opt("text") as? String)?.trim().orEmpty()
+            val start = segment.optDouble("start", Double.NaN)
+            val end = segment.optDouble("end", Double.NaN)
+            // 先判断原始时间，避免截断或毫秒取整把倒序段变成合法段。
+            if (text.isEmpty() || !start.isFinite() || !end.isFinite() || end < start) continue
+            val speaker = if (audio.separateSpeakers) {
+                segment.opt("speaker")?.takeIf { it is String || it is Number }
+                    ?.toString()?.trim()?.takeIf { it.isNotEmpty() }?.let { "custom:$it" }
+            } else null
+            add(AsrSentence(
+                (start * 1000).toLong().coerceIn(0L, audio.durationMillis),
+                (end * 1000).toLong().coerceIn(0L, audio.durationMillis), text, speaker,
+            ))
+        }
+    }
+    if (sentences.isNotEmpty()) return sentences
+    // 保留纯 text 响应与 MiniMax base_resp 错误码的既有处理。
+    val text = transcriptionText(json)
+    return if (text.isBlank()) emptyList() else listOf(AsrSentence(0, audio.durationMillis, text, null))
+}
+
 /** 自定义服务用 OpenAI 兼容的 audio/transcriptions multipart 协议；完整地址模式按填写的地址原样请求。 */
 class CustomAsrProvider(private val settings:AndroidTranscribeSettings, private val hotwords: () -> List<String> = { emptyList() }):AsrProvider {
     override suspend fun recognize(audio:AsrAudio,key:String,beforeAudio:suspend()->Unit):AsrResult=withContext(Dispatchers.IO){
@@ -42,7 +71,9 @@ class CustomAsrProvider(private val settings:AndroidTranscribeSettings, private 
         if(urls.isEmpty() || model.isBlank())throw AsrException(AsrError.Protocol)
         val client=OkHttpClient.Builder().connectTimeout(10,TimeUnit.SECONDS).readTimeout(8,TimeUnit.MINUTES).callTimeout(8,TimeUnit.MINUTES).followRedirects(false).followSslRedirects(false).build()
         // 自动模式照旧发热词；完整模式由设置决定，默认不发。
-        val body = customAsrBody(audio, model, hotwords(), withPrompt = mode == CustomEndpointMode.Auto || settings.customPrompt.value)
+        val body = customAsrBody(audio, model, hotwords(),
+            withPrompt = mode == CustomEndpointMode.Auto || settings.customPrompt.value,
+            verboseJson = settings.customVerboseJson.value)
         var call: Call? = null
         try {
             for(url in urls) {
@@ -54,8 +85,8 @@ class CustomAsrProvider(private val settings:AndroidTranscribeSettings, private 
                     if(!response.isSuccessful)throw AsrException(if(response.code>=500 || response.code==429)AsrError.Server else AsrError.Protocol)
                     val bytes=response.body!!.byteStream().use{ input -> val out=java.io.ByteArrayOutputStream();val buffer=ByteArray(8192);while(out.size()<=1_000_000){val n=input.read(buffer);if(n<0)break;out.write(buffer,0,n)};out.toByteArray() }
                     if(bytes.size>1_000_000)throw AsrException(AsrError.Protocol)
-                    val text=transcriptionText(JSONObject(bytes.toString(Charsets.UTF_8)))
-                    return@withContext AsrResult(if(text.isBlank())emptyList() else listOf(AsrSentence(0,audio.durationMillis,text,null)),audio.durationMillis,null)
+                    val sentences=transcriptionSentences(JSONObject(bytes.toString(Charsets.UTF_8)),audio)
+                    return@withContext AsrResult(sentences,audio.durationMillis,null)
                 }
             }
             throw AsrException(AsrError.Protocol)
