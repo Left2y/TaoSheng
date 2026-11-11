@@ -63,6 +63,10 @@ class AndroidTranscribeSettings internal constructor(private val context: Contex
     private val _customPrompt = MutableStateFlow(prefs.getBoolean("customPrompt", false))
     val customPrompt = _customPrompt.asStateFlow()
     fun setCustomPrompt(on: Boolean) { check(prefs.edit().putBoolean("customPrompt", on).commit()); _customPrompt.value = on; onChanged() }
+    /** 仅在服务支持时请求句级时间戳；默认仍请求 json，两种地址模式共用。 */
+    private val _customVerboseJson = MutableStateFlow(prefs.getBoolean("customVerboseJson", false))
+    val customVerboseJson = _customVerboseJson.asStateFlow()
+    fun setCustomVerboseJson(on: Boolean) { check(prefs.edit().putBoolean("customVerboseJson", on).commit()); _customVerboseJson.value = on; onChanged() }
     private val _ready = MutableStateFlow(false)
     override val ready = _ready.asStateFlow()
     private val listener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, _ ->

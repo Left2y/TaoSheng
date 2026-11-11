@@ -402,7 +402,8 @@ private fun SettingsCard(settings: TranscribeSettings, onSaved: () -> Unit) {
             if (source == TranscribeSource.Custom) {
                 CustomModelForm(advanced.customEndpoint,advanced.customModel,hasKey,
                     "自定义音频转写服务",advanced::fetchModels,advanced::saveCustomAll,
-                    app.resound.ui.settings.EndpointModeUi(advanced.customEndpointMode,advanced.customPrompt,advanced::setCustomPrompt,advanced::saveCustomAll))
+                    app.resound.ui.settings.EndpointModeUi(advanced.customEndpointMode,advanced.customPrompt,advanced::setCustomPrompt,advanced::saveCustomAll,
+                        advanced.customVerboseJson,advanced::setCustomVerboseJson))
 
             }
             // 卡 116：豆包和自定义转写服务各存一组请求头；本地转写不联网，不需要
